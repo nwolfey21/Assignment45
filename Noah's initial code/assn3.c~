@@ -193,7 +193,7 @@ double clock_rate=2000000000.0;//3200000000.0;//2666700000.0; // change to 16000
 /***********************************************************************/
 void matrix_multiply( int rank, int id, double **A, double **B, double **C, int size, int slice, int count )
 {
-    int i=0, j=0, k=0;
+    int i=0, j=0, k=0, jj=0;
     unsigned long long last=rdtsc();
     unsigned long long current=rdtsc();
 
@@ -207,11 +207,12 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 		}
 		for( j = 0; j < slice; j++ )
 		{
+			jj = j+((rank+count)%slice)*slice;
 			for( k = 0; k < size; k++ )
 			{
-				C[i][j+slice*count] += A[i][k] * B[k][j];
+				C[i][jj] += A[i][k] * B[k][j];
 			}
-//			printf("rank:%d C[%d][%d]=%f\n",rank,i,j+slice*count,C[i][j+slice*count]);
+//			printf("rank:%d C[%d][%d]=%f\n",rank,i,jj,C[i][jj]);
 		}
 	}
 }
@@ -228,7 +229,7 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 int main(int argc, char** argv)
 {
 	/***Matrix Variables***/
-	unsigned int matrix_size=8;
+	unsigned int matrix_size=4;
 	double **A=NULL;
 	double **B=NULL;
 //	double **outB=NULL;
@@ -299,7 +300,7 @@ int main(int argc, char** argv)
 	C = (double **)calloc( datapernode, sizeof(double*));
 	for( i = 0; i < datapernode; i++ ) 
 	{
-		C[i] = (double *)calloc( datapernode, sizeof(double));
+		C[i] = (double *)calloc( matrix_size, sizeof(double));
 	}
 
 	if(myRank == 0)
@@ -377,12 +378,19 @@ int main(int argc, char** argv)
 			}
 			copy_cycles += rdtsc() - start_copy;
 		}
-		if(myRank == 0 && count%64 == 0)
+		if(myRank == 1 /*&& count%64 == 0*/)
 		{
 			last = current;
 			current = rdtsc();
 			printf("Completed %d out of %d in time %lf secs \n", count+1, commSize, ((double)current - (double)last)/clock_rate);
-		}
+/*			for(i=0;i<datapernode;i++)
+			{
+				for(j=0;j<matrix_size;j++)
+				{
+					printf("rank:%d C[%d][%d]=%f\n",myRank,i,j,C[i][j]);
+				}
+			}
+*/		}
 	}
 	time_cycles = rdtsc() - start_time;
 	//---Total program execution time reduction---//
