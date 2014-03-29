@@ -207,12 +207,18 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 		}
 		for( j = 0; j < slice; j++ )
 		{
-			jj = j+((rank+count)%slice)*slice;
-			for( k = 0; k < size; k++ )
+//			jj = j+((rank+count)%slice)*slice;
+			jj = j+count*slice;
+/*			if(slice==1)
+			{
+				jj = count;
+			}
+*/			for( k = 0; k < size; k++ )
 			{
 				C[i][jj] += A[i][k] * B[k][j];
 			}
-//			printf("rank:%d C[%d][%d]=%f\n",rank,i,jj,C[i][jj]);
+			if(rank == 0)
+			printf("rank:%d j:%d jj:%d C[%d][%d]=%f\n",rank,j,jj,i,jj,C[i][jj]);
 		}
 	}
 }
@@ -224,12 +230,36 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 
 /***********************************************************************/
 /* Start															   */
+/* Parallel I/O (Writing computed C matrix to file)					   */
+/***********************************************************************/
+void parallelIO(int rank, int size, int slice, double **C)
+{
+	int i=0, ii=0, j=0, n=0;
+	for(i=0;i<slice;i++)
+	{	
+		for(j=0;j<size;j++)
+		{
+			ii = i+rank*slice;
+			n = j + ii*size;
+			printf("rank:%d n:%d C[%d][%d]=%f\n",rank,n,i,j,C[i][j]);
+			//output to file
+		}
+	}
+}
+/***********************************************************************/
+/* End																   */
+/* Parallel I/O (Writing computed C matrix to file)					   */
+/***********************************************************************/
+
+
+/***********************************************************************/
+/* Start															   */
 /* Main 									   						   */
 /***********************************************************************/
 int main(int argc, char** argv)
 {
 	/***Matrix Variables***/
-	unsigned int matrix_size=4;
+	unsigned int matrix_size=8;
 	double **A=NULL;
 	double **B=NULL;
 //	double **outB=NULL;
@@ -378,19 +408,20 @@ int main(int argc, char** argv)
 			}
 			copy_cycles += rdtsc() - start_copy;
 		}
-		if(myRank == 1 /*&& count%64 == 0*/)
+		if(myRank == 0 /*&& count%64 == 0*/)
 		{
 			last = current;
 			current = rdtsc();
 			printf("Completed %d out of %d in time %lf secs \n", count+1, commSize, ((double)current - (double)last)/clock_rate);
-/*			for(i=0;i<datapernode;i++)
+			for(i=0;i<datapernode;i++)
 			{
 				for(j=0;j<matrix_size;j++)
 				{
-					printf("rank:%d C[%d][%d]=%f\n",myRank,i,j,C[i][j]);
+//					printf("rank:%d C[%d][%d]=%f\n",myRank,i,j,C[i][j]);
 				}
 			}
-*/		}
+			parallelIO(myRank, matrix_size, datapernode, C);
+		}
 	}
 
 
