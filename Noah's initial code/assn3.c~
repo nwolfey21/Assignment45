@@ -207,18 +207,60 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 		}
 		for( j = 0; j < slice; j++ )
 		{
-			jj = j+((rank+count)%slice)*slice;
+			jj = j+count*slice;
 			for( k = 0; k < size; k++ )
 			{
 				C[i][jj] += A[i][k] * B[k][j];
 			}
-//			printf("rank:%d C[%d][%d]=%f\n",rank,i,jj,C[i][jj]);
+//			if(rank == 0)
+			printf("rank:%d j:%d jj:%d C[%d][%d]=%f\n",rank,j,jj,i,jj,C[i][jj]);
 		}
 	}
 }
 /***********************************************************************/
 /* End  															   */
 /* Standard matrix multiplication 									   */
+/***********************************************************************/
+
+
+/***********************************************************************/
+/* Start															   */
+/* Parallel I/O (Writing computed C matrix to file)					   */
+/***********************************************************************/
+void parallelIO(int rank, int size, int slice, double **C)
+{
+/*	MPI_File fh;
+	MPI_Offset offset;
+  	MPI_Status status;
+	char filename[25];
+	sprintf(filename, "data/cMatrix.dat");
+	int result = MPI_File_open( MPI_COMM_WORLD, filename, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
+    if (result) 
+	{
+        printf( "Unable to open file \n" );
+    }
+
+	int i=0, ii=0, j=0, n=0;
+	for(i=0;i<slice;i++)
+	{	
+//		for(j=0;j<size;j++)
+//		{
+			ii = i+rank*slice;
+			n = j + ii*size;
+
+  			offset = n;
+			
+//    		MPI_File_write_at(fh, offset, C[i], size, MPI_DOUBLE, &status);
+
+//			printf("rank:%d n:%d C[%d][%d]=%f\n",rank,n,i,j,C[i][j]);
+//		}
+	}
+    MPI_File_close( &fh );
+*/
+}
+/***********************************************************************/
+/* End																   */
+/* Parallel I/O (Writing computed C matrix to file)					   */
 /***********************************************************************/
 
 
@@ -237,7 +279,7 @@ int main(int argc, char** argv)
 	double *inB=NULL;
 	double **C=NULL;
 	/***Other Variables***/
-	int i, j, n, datapernode, flag, tasks, nodes;
+	int i, ii, j, n, datapernode, flag, tasks, nodes, ranksPerFile;
 	int commSize, myRank, send, recv, count, id;
 	long long start_time, time_cycles, sum_cycles, transfer_cycles, start_transfer;
 	long long start_compute, compute_cycles, min_cycles, max_cycles;
@@ -264,6 +306,8 @@ int main(int argc, char** argv)
 				case 't': 	tasks = atoi(argv[i+1]);
 							break;
 				case 'n': 	nodes = atoi(argv[i+1]);
+							break;
+				case 'r':	ranksPerFile = atoi(argv[i+1]);	//1=all ranks use one file, 4=4ranks per file, etc
 							break;
 			}
 		}
@@ -383,15 +427,38 @@ int main(int argc, char** argv)
 			last = current;
 			current = rdtsc();
 			printf("Completed %d out of %d in time %lf secs \n", count+1, commSize, ((double)current - (double)last)/clock_rate);
-/*			for(i=0;i<datapernode;i++)
+			for(i=0;i<datapernode;i++)
 			{
 				for(j=0;j<matrix_size;j++)
 				{
-					printf("rank:%d C[%d][%d]=%f\n",myRank,i,j,C[i][j]);
+//					printf("rank:%d C[%d][%d]=%f\n",myRank,i,j,C[i][j]);
 				}
 			}
-*/		}
+//			parallelIO(myRank, matrix_size, datapernode, C);
+		}
 	}
+
+	/********Start Parallel I/O (Writing computed C matrix to file)********/
+	MPI_File fh;
+	MPI_Offset offset;
+	char filename[25];
+	sprintf(filename, "data/cMatrix.dat");
+	int err = MPI_File_open( MPI_COMM_WORLD, filename, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
+    if (err) 								//Verify File was succesfully opened
+	{
+        printf( "Unable to open file \n" );
+    }
+	for(i=0;i<datapernode;i++)
+	{	
+			ii = i+myRank*datapernode;		//compute i index into global C matrix
+  			offset = j + ii*matrix_size;	//Set the offset into the file for first data location
+    		MPI_File_write_at(fh, offset, C[i], matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
+//			printf("rank:%d n:%d C[%d][%d]=%f\n",rank,n,i,j,C[i][j]);
+	}
+    MPI_File_close( &fh );					//Close the MPI File
+	/*********End Parallel I/O (Writing computed C matrix to file)*********/
+
+
 	time_cycles = rdtsc() - start_time;
 	//---Total program execution time reduction---//
 	MPI_Allreduce(&time_cycles,&sum_cycles,1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);
