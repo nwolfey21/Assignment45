@@ -214,7 +214,7 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 				C[i][jj] += A[i][k] * B[k][j];
 			}
 //			if(rank == 0)
-			printf("rank:%d j:%d jj:%d C[%d][%d]=%f\n",rank,j,jj,i,jj,C[i][jj]);
+//			printf("rank:%d j:%d jj:%d C[%d][%d]=%f\n",rank,j,jj,i,jj,C[i][jj]);
 		}
 	}
 }
@@ -324,6 +324,8 @@ int main(int argc, char** argv)
 		}
 	}
 
+	if(myRank == 0)
+		printf("\nComputing C Matrix\n");
 	//--Start Timer--//
 	start_time = rdtsc();
 	//---Compute and Transfer Loop---//
@@ -382,7 +384,7 @@ int main(int argc, char** argv)
 			}
 			copy_cycles += rdtsc() - start_copy;
 		}
-		if(myRank == 1 /*&& count%64 == 0*/)
+		if(myRank == 0 /*&& count%64 == 0*/)
 		{
 			last = current;
 			current = rdtsc();
@@ -397,8 +399,13 @@ int main(int argc, char** argv)
 //			parallelIO(myRank, matrix_size, datapernode, C);
 		}
 	}
+	MPI_Barrier(MPI_COMM_WORLD);
+	if(myRank ==0)
+		printf("C Matrix Computed\n\n");
 
 	/********Start Parallel I/O (Writing computed C matrix to file)********/
+	if(myRank == 0)
+		printf("Writing Data to File\n");
 	MPI_File fh;
 	MPI_Offset offset = 0;
 	char filename[30];
@@ -438,7 +445,6 @@ int main(int argc, char** argv)
 	}
 	else 	//Case with all ranks writing to one file
 	{
-		printf("\n%d Writing\n",myRank);
 		sprintf(filename, "data/cMatrix.dat");
 		err = MPI_File_open( MPI_COMM_WORLD, filename, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
 		if (err) 								//Verify File was succesfully opened
@@ -463,7 +469,7 @@ int main(int argc, char** argv)
 			}
 			ii = i+myRank*datapernode;		//compute i index into global C matrix
   			offset = ii*matrix_size;	//Set the offset into the file for first data location
-			MPI_File_write_at(fh, offset, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
+			MPI_File_write_at(fh, offset*8, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
 			/****Start Verify Data was written to file****/
 			err = MPI_Get_elements(&status, MPI_BYTE, &count);
 			if(err != MPI_SUCCESS)
@@ -475,7 +481,7 @@ int main(int argc, char** argv)
 			/****End Verify Data was written to file****/
 
 			/****Start Verify Data was written to file****/
-			MPI_File_read_at(fh,offset,temp,matrix_size,MPI_DOUBLE,&status);
+			MPI_File_read_at(fh,offset*8,temp,matrix_size,MPI_DOUBLE,&status);
 			err = MPI_Get_elements(&status, MPI_BYTE, &count);
 			if(err != MPI_SUCCESS)
 				printf("Read Failed\n");
@@ -485,13 +491,13 @@ int main(int argc, char** argv)
 				printf("Rank:%d Read %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
 			for(j=0;j<matrix_size;j++)
 			{
-				printf("offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
+//				printf("offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
 			}
 			/****End Verify Data was written to file****/
 		}
 	}
 	/*********End Parallel I/O (Writing computed C matrix to file)*********/
-	temp = (double *)calloc(matrix_size,sizeof(double*));
+	temp = (double *)calloc(matrix_size*matrix_size,sizeof(double*));
 	MPI_Barrier(MPI_COMM_WORLD);
 	if(myRank == 1)
 	{
@@ -500,17 +506,17 @@ int main(int argc, char** argv)
 			printf("\nVerification time\n");
 			offset = 0;
 			/***Start Verify correct data was written to file***/
-			MPI_File_read_at(fh,offset,temp,1,MPI_DOUBLE,&status);
+			MPI_File_read_at(fh,offset,temp,matrix_size*matrix_size,MPI_DOUBLE,&status);
 			/****Start Verify Data was written to file****/
 			err = MPI_Get_elements(&status, MPI_BYTE, &count);
 			if(err != MPI_SUCCESS)
 				printf("----Read Failed\n");
-			if(count != 1*sizeof(double))
+			if(count != matrix_size*matrix_size*sizeof(double))
 				printf("----Did not Read the same number of bytes as requested (read %d bytes)\n",count);
 			else
 				printf("----Rank:%d Read %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
 			/****End Verify Data was written to file****/
-			for(j=0;j<1;j++)
+			for(j=0;j<matrix_size*matrix_size;j++)
 			{
 				printf("----offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
 			}
