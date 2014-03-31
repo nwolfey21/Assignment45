@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <mpi.h>
+#include <math.h>
 
 #if defined(__i386__)
 
@@ -238,7 +239,7 @@ int main(int argc, char** argv)
 	double *inB=NULL;
 	double **C=NULL;
 	/***Other Variables***/
-	int i, ii, j, n, datapernode, flag, tasks, nodes, ranksPerFile;
+	int i, ii, j, n, datapernode, flag, tasks, nodes, ranksPerFile=0;
 	int commSize, myRank, send, recv, count, id;
 	long long start_time, time_cycles, sum_cycles, transfer_cycles, start_transfer;
 	long long start_compute, compute_cycles, min_cycles, max_cycles;
@@ -399,24 +400,124 @@ int main(int argc, char** argv)
 
 	/********Start Parallel I/O (Writing computed C matrix to file)********/
 	MPI_File fh;
-	MPI_Offset offset;
-	char filename[25];
-	sprintf(filename, "data/cMatrix.dat");
-	int err = MPI_File_open( MPI_COMM_WORLD, filename, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
-    if (err) 								//Verify File was succesfully opened
-	{
-        printf( "Unable to open file \n" );
-    }
-	for(i=0;i<datapernode;i++)
-	{	
-			ii = i+myRank*datapernode;		//compute i index into global C matrix
-  			offset = j + ii*matrix_size;	//Set the offset into the file for first data location
-    		MPI_File_write_at(fh, offset, C[i], matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
-//			printf("rank:%d n:%d C[%d][%d]=%f\n",rank,n,i,j,C[i][j]);
-	}
-    MPI_File_close( &fh );					//Close the MPI File
-	/*********End Parallel I/O (Writing computed C matrix to file)*********/
+	MPI_Offset offset = 0;
+	char filename[30];
+	double *tempC = (double *)calloc(matrix_size,sizeof(double*));
+	double *temp = (double *)calloc(matrix_size,sizeof(double*));
+	int err;
 
+	if(ranksPerFile !=0)	//All cases other than 1 file for all ranks
+	{
+		int fileID = floor(myRank/ranksPerFile); //ranksPerFIle many sequential MPI ranks will have the same fileID
+		sprintf(filename, "data/cMatrix%d.dat",fileID);	//Brand each file with it's id
+		err = MPI_File_open( MPI_COMM_SELF, filename, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
+		if (err) 								//Verify File was succesfully opened
+		{
+			printf( "Unable to open file %s\n",filename );
+		}
+
+		for(i=0;i<datapernode;i++)
+		{	
+			for(j=0;j<matrix_size;j++)
+			{
+				tempC[j] = C[i][j];
+			}
+			ii = i+myRank*datapernode;		//compute i index into global C matrix
+  			offset = ii*matrix_size;	//Set the offset into the file for first data location
+			MPI_File_write_at(fh, offset, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
+			/****Start Verify Data was written to file****/
+			err = MPI_Get_elements(&status, MPI_BYTE, &count);
+			if(err != MPI_SUCCESS)
+				printf("Write Failed\n");
+			if(count != matrix_size*sizeof(double))
+				printf("Did not write the same number of bytes as requested\n");
+			else
+				printf("Rank:%d Wrote %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
+			/****End Verify Data was written to file****/
+		}
+	}
+	else 	//Case with all ranks writing to one file
+	{
+		printf("\n%d Writing\n",myRank);
+		sprintf(filename, "data/cMatrix.dat");
+		err = MPI_File_open( MPI_COMM_WORLD, filename, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
+		if (err) 								//Verify File was succesfully opened
+		{
+			printf( "Unable to open file \n" );
+		}
+
+/*		MPI_Offset disp = 0;
+		MPI_Datatype etype = MPI_DOUBLE;
+		MPI_Datatype ftype = MPI_DOUBLE;
+		MPI_Info info = (MPI_Info)NULL;
+		err = MPI_File_set_view(fh, disp, etype, ftype, (char *)NULL, info);
+		if(err != MPI_SUCCESS) 
+			printf("MPI_File_set_view Failed\n");
+*/
+		for(i=0;i<datapernode;i++)
+		{	
+			MPI_Barrier(MPI_COMM_WORLD);
+			for(j=0;j<matrix_size;j++)
+			{
+				tempC[j] = C[i][j];
+			}
+			ii = i+myRank*datapernode;		//compute i index into global C matrix
+  			offset = ii*matrix_size;	//Set the offset into the file for first data location
+			MPI_File_write_at(fh, offset, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
+			/****Start Verify Data was written to file****/
+			err = MPI_Get_elements(&status, MPI_BYTE, &count);
+			if(err != MPI_SUCCESS)
+				printf("Write Failed\n");
+			if(count != matrix_size*sizeof(double))
+				printf("Did not write the same number of bytes as requested\n");
+			else
+				printf("Rank:%d Wrote %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
+			/****End Verify Data was written to file****/
+
+			/****Start Verify Data was written to file****/
+			MPI_File_read_at(fh,offset,temp,matrix_size,MPI_DOUBLE,&status);
+			err = MPI_Get_elements(&status, MPI_BYTE, &count);
+			if(err != MPI_SUCCESS)
+				printf("Read Failed\n");
+			if(count != matrix_size*sizeof(double))
+				printf("Did not Read the same number of bytes as requested\n");
+			else
+				printf("Rank:%d Read %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
+			for(j=0;j<matrix_size;j++)
+			{
+				printf("offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
+			}
+			/****End Verify Data was written to file****/
+		}
+	}
+	/*********End Parallel I/O (Writing computed C matrix to file)*********/
+	temp = (double *)calloc(matrix_size,sizeof(double*));
+	MPI_Barrier(MPI_COMM_WORLD);
+	if(myRank == 1)
+	{
+//		for(i=0;i<4;i++)
+//		{
+			printf("\nVerification time\n");
+			offset = 0;
+			/***Start Verify correct data was written to file***/
+			MPI_File_read_at(fh,offset,temp,1,MPI_DOUBLE,&status);
+			/****Start Verify Data was written to file****/
+			err = MPI_Get_elements(&status, MPI_BYTE, &count);
+			if(err != MPI_SUCCESS)
+				printf("----Read Failed\n");
+			if(count != 1*sizeof(double))
+				printf("----Did not Read the same number of bytes as requested (read %d bytes)\n",count);
+			else
+				printf("----Rank:%d Read %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
+			/****End Verify Data was written to file****/
+			for(j=0;j<1;j++)
+			{
+				printf("----offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
+			}
+			/***End Verify correct data was written to file***/
+//		}
+	}
+	MPI_File_close( &fh );					//Close the MPI File
 
 	time_cycles = rdtsc() - start_time;
 	//---Total program execution time reduction---//
