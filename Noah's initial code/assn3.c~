@@ -396,7 +396,6 @@ int main(int argc, char** argv)
 //					printf("rank:%d C[%d][%d]=%f\n",myRank,i,j,C[i][j]);
 				}
 			}
-//			parallelIO(myRank, matrix_size, datapernode, C);
 		}
 	}
 	MPI_Barrier(MPI_COMM_WORLD);
@@ -451,15 +450,6 @@ int main(int argc, char** argv)
 		{
 			printf( "Unable to open file \n" );
 		}
-
-/*		MPI_Offset disp = 0;
-		MPI_Datatype etype = MPI_DOUBLE;
-		MPI_Datatype ftype = MPI_DOUBLE;
-		MPI_Info info = (MPI_Info)NULL;
-		err = MPI_File_set_view(fh, disp, etype, ftype, (char *)NULL, info);
-		if(err != MPI_SUCCESS) 
-			printf("MPI_File_set_view Failed\n");
-*/
 		for(i=0;i<datapernode;i++)
 		{	
 			MPI_Barrier(MPI_COMM_WORLD);
@@ -477,32 +467,16 @@ int main(int argc, char** argv)
 			if(count != matrix_size*sizeof(double))
 				printf("Did not write the same number of bytes as requested\n");
 			else
-				printf("Rank:%d Wrote %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
-			/****End Verify Data was written to file****/
-
-			/****Start Verify Data was written to file****/
-			MPI_File_read_at(fh,offset*8,temp,matrix_size,MPI_DOUBLE,&status);
-			err = MPI_Get_elements(&status, MPI_BYTE, &count);
-			if(err != MPI_SUCCESS)
-				printf("Read Failed\n");
-			if(count != matrix_size*sizeof(double))
-				printf("Did not Read the same number of bytes as requested\n");
-			else
-				printf("Rank:%d Read %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
-			for(j=0;j<matrix_size;j++)
-			{
-//				printf("offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
-			}
+				printf("Rank:%d Wrote %d bytes(%d doubles) in %s at offset %d\n", myRank,count,count/8,filename,(int)offset);
 			/****End Verify Data was written to file****/
 		}
 	}
 	/*********End Parallel I/O (Writing computed C matrix to file)*********/
+
 	temp = (double *)calloc(matrix_size*matrix_size,sizeof(double*));
 	MPI_Barrier(MPI_COMM_WORLD);
 	if(myRank == 1)
 	{
-//		for(i=0;i<4;i++)
-//		{
 			printf("\nVerification time\n");
 			offset = 0;
 			/***Start Verify correct data was written to file***/
@@ -521,7 +495,6 @@ int main(int argc, char** argv)
 				printf("----offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
 			}
 			/***End Verify correct data was written to file***/
-//		}
 	}
 	MPI_File_close( &fh );					//Close the MPI File
 
