@@ -14,4 +14,5 @@ Run Jobs:
 Flags:
 	-n Total number of nodes
 	-t Total number of MPI tasks
-	-r Total numnber of ranks per file. Except 0=all ranks share one file.
+	-r Total number of ranks per file. Except 0=all ranks share one file.
+	-b turns on blocked data writes

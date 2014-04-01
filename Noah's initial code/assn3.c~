@@ -223,6 +223,33 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 /* Standard matrix multiplication 									   */
 /***********************************************************************/
 
+/*void parallelIO(MPI_File fh, double **C, int matrix_size, int datapernode, int myRank, char *filename)
+{
+	MPI_Offset offset = 0;
+	MPI_Status status;
+	double *tempC = (double *)calloc(datapernode,sizeof(double*));
+	int count=0,i,j,ii,err=0;
+	for(i=0;i<datapernode;i++)
+	{	
+		MPI_Barrier(MPI_COMM_WORLD);
+		for(j=0;j<matrix_size;j++)
+		{
+			tempC[j] = C[i][j];
+		}
+		ii = i+myRank*datapernode;		//compute i index into global C matrix
+		offset = ii*matrix_size;	//Set the offset into the file for first data location
+		MPI_File_write_at(fh, offset*8, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
+*/		/****Start Verify Data was written to file****/
+/*		err = MPI_Get_elements(&status, MPI_BYTE, &count);
+		if(err != MPI_SUCCESS)
+			printf("Write Failed\n");
+		if(count != matrix_size*sizeof(double))
+			printf("Did not write the same number of bytes as requested\n");
+		else
+			printf("Rank:%d Wrote %d bytes(%d doubles) in %s at offset %d\n", myRank,count,count/8,filename,(int)offset);
+*/		/****End Verify Data was written to file****/
+//	}
+//}
 
 /***********************************************************************/
 /* Start															   */
@@ -240,7 +267,7 @@ int main(int argc, char** argv)
 	double **C=NULL;
 	/***Other Variables***/
 	int i, ii, j, n, datapernode, flag, tasks, nodes, ranksPerFile=0;
-	int commSize, myRank, send, recv, count, id;
+	int commSize, myRank, send, recv, count, id, blocking=0;
 	long long start_time, time_cycles, sum_cycles, transfer_cycles, start_transfer;
 	long long start_compute, compute_cycles, min_cycles, max_cycles;
 	long long sum_copy, sum_compute, sum_transfer;
@@ -255,6 +282,7 @@ int main(int argc, char** argv)
 	MPI_Status status;
 	char filePath[75];
 	FILE *dataFile;
+	#define BLOCK_SIZE 8388608
 
 	//---Setup output file---//
 	for(i = 1; i < argc; ++i) 
@@ -269,6 +297,7 @@ int main(int argc, char** argv)
 							break;
 				case 'r':	ranksPerFile = atoi(argv[i+1]);	//1=all ranks use one file, 4=4ranks per file, etc
 							break;
+				case 'b':	blocking = 1;					//1=write files to 8MB blocks, 0=write data compact
 			}
 		}
 	}
@@ -429,7 +458,10 @@ int main(int argc, char** argv)
 				tempC[j] = C[i][j];
 			}
 			ii = i+myRank*datapernode;		//compute i index into global C matrix
-  			offset = ii*matrix_size;	//Set the offset into the file for first data location
+			if(blocking)
+				offset = ii*matrix_size*BLOCK_SIZE;		//Move offset over 8MB (1block)
+			else
+  				offset = ii*matrix_size*8;	//Set the offset into the file for first data location without blocking
 			MPI_File_write_at(fh, offset, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
 			/****Start Verify Data was written to file****/
 			err = MPI_Get_elements(&status, MPI_BYTE, &count);
@@ -450,6 +482,7 @@ int main(int argc, char** argv)
 		{
 			printf( "Unable to open file \n" );
 		}
+//		parallelIO(fh, C, matrix_size, datapernode, myRank, filename);
 		for(i=0;i<datapernode;i++)
 		{	
 			MPI_Barrier(MPI_COMM_WORLD);
@@ -458,8 +491,11 @@ int main(int argc, char** argv)
 				tempC[j] = C[i][j];
 			}
 			ii = i+myRank*datapernode;		//compute i index into global C matrix
-  			offset = ii*matrix_size;	//Set the offset into the file for first data location
-			MPI_File_write_at(fh, offset*8, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
+			if(blocking)
+				offset = ii*matrix_size*BLOCK_SIZE;		//Move offset over 8MB (1block)
+			else
+  				offset = ii*matrix_size*8;	//Set the offset into the file for first data location without blocking
+			MPI_File_write_at(fh, offset, tempC, matrix_size, MPI_DOUBLE, &status);	//Write vector C[i]
 			/****Start Verify Data was written to file****/
 			err = MPI_Get_elements(&status, MPI_BYTE, &count);
 			if(err != MPI_SUCCESS)
@@ -475,9 +511,9 @@ int main(int argc, char** argv)
 
 	temp = (double *)calloc(matrix_size*matrix_size,sizeof(double*));
 	MPI_Barrier(MPI_COMM_WORLD);
-	if(myRank == 1)
+	if(myRank == 0)
 	{
-			printf("\nVerification time\n");
+			printf("\nVerification\n");
 			offset = 0;
 			/***Start Verify correct data was written to file***/
 			MPI_File_read_at(fh,offset,temp,matrix_size*matrix_size,MPI_DOUBLE,&status);
@@ -492,17 +528,23 @@ int main(int argc, char** argv)
 			/****End Verify Data was written to file****/
 			for(j=0;j<matrix_size*matrix_size;j++)
 			{
-				printf("----offset:%d temp[%d]:%f \n",(int)offset,j,temp[j]);
+				printf("----offset:%d temp[%d]:%f \n",(int)offset+8*j,j,temp[j]);
 			}
 			/***End Verify correct data was written to file***/
 	}
+//	printf("myrank:%d\n",myRank);
+	if(myRank==0)
 	MPI_File_close( &fh );					//Close the MPI File
+//	printf("myrank:%d\n",myRank);
 
 	time_cycles = rdtsc() - start_time;
+//	printf("myrank0:%d\n",myRank);
 	//---Total program execution time reduction---//
 	MPI_Allreduce(&time_cycles,&sum_cycles,1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);
+//	printf("myrank0.5:%d\n",myRank);
 	MPI_Allreduce(&time_cycles,&max_cycles,1,MPI_LONG_LONG,MPI_MAX,MPI_COMM_WORLD);
 	MPI_Allreduce(&time_cycles,&min_cycles,1,MPI_LONG_LONG,MPI_MIN,MPI_COMM_WORLD);
+//	printf("myrank1:%d\n",myRank);
 	//---MPI transfer time reduction---//
 	MPI_Allreduce(&transfer_cycles,&sum_transfer,1,MPI_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);
 	MPI_Allreduce(&transfer_cycles,&max_transfer,1,MPI_LONG_LONG,MPI_MAX,MPI_COMM_WORLD);
@@ -516,15 +558,15 @@ int main(int argc, char** argv)
 	MPI_Allreduce(&compute_cycles,&max_compute,1,MPI_LONG_LONG,MPI_MAX,MPI_COMM_WORLD);
 	MPI_Allreduce(&compute_cycles,&min_compute,1,MPI_LONG_LONG,MPI_MIN,MPI_COMM_WORLD);
 
-	//---Open Output File for writing---//
-    if((dataFile = fopen(filePath,"a")) == NULL) 
-	{
-        fprintf(stdout,"Couldn't open data output file\n");
-        exit(1);
-    }
-
 	if(myRank == 0)
 	{
+		printf("\nWriting Timing File\n");
+		//---Open Output File for writing---//
+		if((dataFile = fopen(filePath,"a")) == NULL) 
+		{
+		    fprintf(stdout,"Couldn't open data output file\n");
+		    exit(1);
+		}
 /*		printf("Cycles:%lld in time %lf secs\n",time_cycles,(double)time_cycles/clock_rate);
 		printf("Max_Cycles:%lld in time %lf secs\n",max_cycles,(double)max_cycles/clock_rate);
 		printf("Min_Cycles:%lld in time %lf secs\n",min_cycles,(double)min_cycles/clock_rate);
@@ -566,7 +608,6 @@ int main(int argc, char** argv)
 		fprintf(dataFile,"%lld %lf ",sum_compute/commSize,(double)(sum_compute/commSize)/clock_rate);
 		fprintf(dataFile,"%lld %lf\n",sum_compute,(double)sum_compute/clock_rate);
 	}
-
 	MPI_Finalize();
 
 	return 0;
