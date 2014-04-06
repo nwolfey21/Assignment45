@@ -194,7 +194,7 @@ typedef struct
 //#define MAXTHRDS 4
 MULTIPDATA mdata;
 
-#define matrix_size 8
+#define matrix_size 16384
 
 unsigned long rng_init_seeds[6]={0x0, 0x123, 0x234, 0x345, 0x456, 0x789};
 unsigned long rng_init_length=6;
