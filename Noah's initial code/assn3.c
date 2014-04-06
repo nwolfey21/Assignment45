@@ -295,7 +295,7 @@ int main(int argc, char** argv)
 							break;
 				case 'n': 	nodes = atoi(argv[i+1]);
 							break;
-				case 'r':	ranksPerFile = atoi(argv[i+1]);	//1=all ranks use one file, 4=4ranks per file, etc
+				case 'r':	ranksPerFile = atoi(argv[i+1]);	//0=all ranks use one file, 4=4ranks per file, etc
 							break;
 				case 'b':	blocking = 1;					//1=write files to 8MB blocks, 0=write data compact
 			}
@@ -338,7 +338,7 @@ int main(int argc, char** argv)
 
 	if(myRank == 0)
 	{
-		printf("\n\nMatrix Size:%d datapernode:%d commSize:%d\n",matrix_size, datapernode, commSize);
+		printf("\n\nMatrix Size:%dx%d datapernode:%d commSize:%d\n",matrix_size, matrix_size, datapernode, commSize);
 	}
 
 	//---Initialize Random Values---//
@@ -457,7 +457,7 @@ int main(int argc, char** argv)
 			{
 				tempC[j] = C[i][j];
 			}
-			ii = i+myRank*datapernode;		//compute i index into global C matrix
+			ii = i+(myRank%ranksPerFile)*datapernode;		//compute i index into global C matrix
 			if(blocking)
 				offset = ii*matrix_size*BLOCK_SIZE;		//Move offset over 8MB (1block)
 			else
@@ -470,7 +470,7 @@ int main(int argc, char** argv)
 			if(count != matrix_size*sizeof(double))
 				printf("Did not write the same number of bytes as requested\n");
 			else
-				printf("Rank:%d Wrote %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
+				printf("Rank:%d Wrote %d bytes(%d doubles) in %s at offset %d\n", myRank,count,count/8,filename,(int)offset);
 			/****End Verify Data was written to file****/
 		}
 	}
@@ -609,7 +609,8 @@ int main(int argc, char** argv)
 		fprintf(dataFile,"%lld %lf\n",sum_compute,(double)sum_compute/clock_rate);
 	}
 	MPI_Finalize();
-
+	if(myRank ==0)
+		printf("Program Completed\n");
 	return 0;
 }
 /***********************************************************************/

@@ -18,5 +18,5 @@ runlocal2:
 	mpirun -np 2 ./assn3 -n 2 -t 2 -r 0 -b
 
 runlocal4:
-	rm data/cMatrix.dat
-	mpirun -np 4 ./assn3 -n 4 -t 4 -r 0
+#	rm data/cMatrix.dat
+	mpirun -np 4 ./assn3 -n 4 -t 4 -r 0 
