@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <mpi.h>
 #include <math.h>
+#include <pthread.h>
 
 #if defined(__i386__)
 
@@ -180,18 +181,64 @@ double genrand_res53(void)
 /* END: MT 19937 *******************************************************/
 /***********************************************************************/
 
+typedef struct 
+{
+  double** A;
+  double** B;
+  double** C;
+  int numthrds;
+  int datapernode;
+} MULTIPDATA;
 
 /***********************Start Global Variables**************************/
+#define MAXTHRDS 4
+MULTIPDATA mdata;
+pthread_t threads[MAXTHRDS];
+
 unsigned long rng_init_seeds[6]={0x0, 0x123, 0x234, 0x345, 0x456, 0x789};
 unsigned long rng_init_length=6;
 double clock_rate=2000000000.0;//3200000000.0;//2666700000.0; // change to 1600000000.0 for Blue Gene/Q
+
+int startcolumn = 0;
 /************************End Global Variables***************************/
+
+void *multip(void *arg)
+{ 
+    /*define and use local variables for convenience*/
+    long mythrd;  
+    int numthrds, dataperthread, numpernode, start, end;
+    double** A, ** B, ** C;
+
+    /*the number of threads and nodes defines the size of the matrix slice*/
+    mythrd=(long)arg;
+
+    numthrds = mdata.numthrds;
+    datapernode = mdata.datapernode;
+    dataperthread = datapernode / numthrds;
+    A = mdata.A;
+    B = mdata.B;
+    C = mdata.C;
+    start = dataperthread*mythrd;
+    end = start + dataperthread;
+
+    /*perform matrix multiply*/
+    for (int i=start; i<end; i++) {
+        for (int j=0; j<datapernode; j++) {
+            for (int k=0; k<matrix_size; k++) {
+                C[i][j+startcolumn] += A[i][k] * B[k][j];
+            }
+        }
+    }
+    
+    pthread_exit((void*)0);
+}
 
 
 /***********************************************************************/
 /* Start															   */
 /* Standard matrix multiplication 									   */
 /***********************************************************************/
+/*
 void matrix_multiply( int rank, int id, double **A, double **B, double **C, int size, int slice, int count )
 {
     int i=0, j=0, k=0, jj=0;
@@ -218,6 +265,7 @@ void matrix_multiply( int rank, int id, double **A, double **B, double **C, int 
 		}
 	}
 }
+*/
 /***********************************************************************/
 /* End  															   */
 /* Standard matrix multiplication 									   */
@@ -295,7 +343,7 @@ int main(int argc, char** argv)
 							break;
 				case 'n': 	nodes = atoi(argv[i+1]);
 							break;
-				case 'r':	ranksPerFile = atoi(argv[i+1]);	//0=all ranks use one file, 4=4ranks per file, etc
+				case 'r':	ranksPerFile = atoi(argv[i+1]);	//1=all ranks use one file, 4=4ranks per file, etc
 							break;
 				case 'b':	blocking = 1;					//1=write files to 8MB blocks, 0=write data compact
 			}
@@ -303,7 +351,8 @@ int main(int argc, char** argv)
 	}
 
 	//***Initialize MPI***/
-	MPI_Init(&argc, &argv);
+        int provided = 0;
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 	MPI_Comm_size(MPI_COMM_WORLD, &commSize);
 	MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
 	//---Compute Partial Matrix Initialization Parameters---//
@@ -314,6 +363,13 @@ int main(int argc, char** argv)
 	rng_init_seeds[0] = myRank;
 	init_by_array(rng_init_seeds, rng_init_length);
 	sprintf(filePath, "data/data.dat");
+
+        //    Pthreads    //
+        int numthrds = MAXTHRDS;
+
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
 	//-----Initialize A Matrix------//
 	A = (double **)calloc( datapernode, sizeof(double*));
@@ -338,7 +394,7 @@ int main(int argc, char** argv)
 
 	if(myRank == 0)
 	{
-		printf("\n\nMatrix Size:%dx%d datapernode:%d commSize:%d\n",matrix_size, matrix_size, datapernode, commSize);
+		printf("\n\nMatrix Size:%d datapernode:%d commSize:%d\n",matrix_size, datapernode, commSize);
 	}
 
 	//---Initialize Random Values---//
@@ -353,6 +409,12 @@ int main(int argc, char** argv)
 		}
 	}
 
+        mdata.A = A;
+        mdata.B = B;
+        mdata.C = C;
+        mdata.numthrds = numthrds;
+        mdata.datapernode = datapernode;
+
 	if(myRank == 0)
 		printf("\nComputing C Matrix\n");
 	//--Start Timer--//
@@ -362,7 +424,16 @@ int main(int argc, char** argv)
 	{
 		start_compute = rdtsc();
 		//---Compute Partial Matrix Multiplication---//
-		matrix_multiply(myRank, id, A, B, C, matrix_size, datapernode, count);
+		//matrix_multiply(myRank, id, A, B, C, matrix_size, datapernode, count);
+           
+                startcolumn = (datapernode * (myRank - count) + matrix_size) % matrix_size;
+                for (i=0; i<numthrds; i++) {
+			pthread_create(&threads[i], &attr, multip, (void*)i);
+                }         
+		for (i=0; i<numthrds; i++) {
+			pthread_join(threads[i], NULL)
+		}
+ 
 		compute_cycles += rdtsc() - start_compute;
 		if(count<commSize-1)
 		{
@@ -457,7 +528,7 @@ int main(int argc, char** argv)
 			{
 				tempC[j] = C[i][j];
 			}
-			ii = i+(myRank%ranksPerFile)*datapernode;		//compute i index into global C matrix
+			ii = i+myRank*datapernode;		//compute i index into global C matrix
 			if(blocking)
 				offset = ii*matrix_size*BLOCK_SIZE;		//Move offset over 8MB (1block)
 			else
@@ -470,7 +541,7 @@ int main(int argc, char** argv)
 			if(count != matrix_size*sizeof(double))
 				printf("Did not write the same number of bytes as requested\n");
 			else
-				printf("Rank:%d Wrote %d bytes(%d doubles) in %s at offset %d\n", myRank,count,count/8,filename,(int)offset);
+				printf("Rank:%d Wrote %d bytes or %d double values at offset %d\n", myRank,count,count/8,(int)offset);
 			/****End Verify Data was written to file****/
 		}
 	}
@@ -609,14 +680,14 @@ int main(int argc, char** argv)
 		fprintf(dataFile,"%lld %lf\n",sum_compute,(double)sum_compute/clock_rate);
 	}
 	MPI_Finalize();
-	if(myRank ==0)
-		printf("Program Completed\n");
+
 	return 0;
 }
 /***********************************************************************/
 /* End																   */
 /* Main 									   						   */
 /***********************************************************************/
+
 
 
 
